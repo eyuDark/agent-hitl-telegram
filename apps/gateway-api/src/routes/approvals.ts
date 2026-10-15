@@ -302,6 +302,19 @@ export function approvalRoutes({ redis, queues }: AppContext) {
             { jobId: `res-${shortId}` },
           );
           approvalWebhookOutcomes.inc({ outcome: "cancelled" });
+
+          // The resolution worker will write the same values; do it now so the
+          // cancel response isn't racing the async DB update.
+          await prisma.approval_requests
+            .update({
+              where: { short_id: shortId },
+              data: {
+                status: "CANCELLED",
+                resolved_at: new Date(),
+                resolution_reason: parsed.data.reason ?? null,
+              },
+            })
+            .catch(() => undefined);
         }
 
         const row = await prisma.approval_requests.findUnique({ where: { short_id: shortId } });
