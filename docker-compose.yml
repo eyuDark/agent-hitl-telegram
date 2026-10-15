@@ -1,0 +1,82 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: hitl
+      POSTGRES_PASSWORD: hitl
+      POSTGRES_DB: hitl
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hitl -d hitl"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  gateway:
+    build:
+      context: .
+      args:
+        APP: gateway-api
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://hitl:hitl@postgres:5432/hitl
+      REDIS_URL: redis://redis:6379
+      PORT: 3000
+    command: ["sh", "-c", "npx prisma migrate deploy && node apps/gateway-api/dist/index.js"]
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      args:
+        APP: worker-service
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://hitl:hitl@postgres:5432/hitl
+      REDIS_URL: redis://redis:6379
+      WORKER_METRICS_PORT: 9464
+    command: ["sh", "-c", "node apps/worker-service/dist/index.js"]
+    ports:
+      - "9464:9464"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - gateway
+    restart: unless-stopped
+
+volumes:
+  pgdata:

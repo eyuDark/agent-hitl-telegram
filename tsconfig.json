@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/shared-types" },
+    { "path": "packages/sdk-ts" },
+    { "path": "apps/gateway-api" },
+    { "path": "apps/worker-service" },
+    { "path": "apps/mcp-server" }
+  ]
+}

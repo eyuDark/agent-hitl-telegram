@@ -1,0 +1,54 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum approval_status {
+  PENDING
+  APPROVED
+  DENIED
+  EXPIRED
+  CANCELLED
+}
+
+enum risk_level {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model approval_requests {
+  id                     String          @id @default(uuid()) @db.Uuid
+  short_id               String          @unique @db.VarChar(12)
+  idempotency_key        String          @unique @db.VarChar(128)
+  agent_id               String          @db.VarChar(64)
+  thread_id              String          @db.VarChar(128)
+  tool_name              String          @db.VarChar(128)
+  tool_args_redacted     Json
+  tool_args_hash         String          @db.Char(64)
+  risk                   risk_level      @default(HIGH)
+  status                 approval_status @default(PENDING)
+  reason                 String?         @db.Text
+
+  telegram_chat_id       BigInt
+  telegram_message_id    BigInt?
+
+  resolved_by_telegram_id BigInt?
+  resolved_by_username    String?         @db.VarChar(64)
+  resolution_reason       String?         @db.Text
+  callback_url            String?         @db.Text
+
+  expires_at             DateTime        @db.Timestamptz(3)
+  created_at             DateTime        @default(now()) @db.Timestamptz(3)
+  resolved_at            DateTime?       @db.Timestamptz(3)
+
+  @@index([status, expires_at])
+  @@index([thread_id])
+  @@index([agent_id, created_at])
+  @@map("approval_requests")
+}

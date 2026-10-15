@@ -1,0 +1,37 @@
+{
+  "name": "agent-hitl-telegram",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "typecheck": "tsc -b",
+    "dev:gateway": "tsc -b && npm run dev -w @hitl/gateway-api",
+    "dev:worker": "tsc -b && npm run dev -w @hitl/worker-service",
+    "start:gateway": "node apps/gateway-api/dist/index.js",
+    "start:worker": "node apps/worker-service/dist/index.js",
+    "start:mcp": "node apps/mcp-server/dist/index.js",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:studio": "prisma studio"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "prisma": "^6.5.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}
