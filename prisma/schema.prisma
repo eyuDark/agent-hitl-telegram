@@ -11,8 +11,15 @@ enum approval_status {
   PENDING
   APPROVED
   DENIED
+  ANSWERED
   EXPIRED
   CANCELLED
+}
+
+enum approval_kind {
+  DECISION
+  CHOICE
+  QUESTION
 }
 
 enum risk_level {
@@ -33,6 +40,10 @@ model approval_requests {
   tool_args_hash         String          @db.Char(64)
   risk                   risk_level      @default(HIGH)
   status                 approval_status @default(PENDING)
+  kind                   approval_kind   @default(DECISION)
+  prompt                 String?         @db.Text
+  options_json           Json?
+  answer_json            Json?
   reason                 String?         @db.Text
 
   telegram_chat_id       BigInt

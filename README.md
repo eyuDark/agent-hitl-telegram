@@ -108,6 +108,38 @@ Response `201` (or `200` on idempotent replay):
 }
 ```
 
+### Request kinds
+
+`kind` selects the interaction shape (default `DECISION`):
+
+| kind | Operator UI | Terminal status | `answer` shape |
+| --- | --- | --- | --- |
+| `DECISION` | ✅ / ❌ inline buttons | `APPROVED` / `DENIED` | `{type:"approval", decision}` |
+| `CHOICE` | tap-to-select reply keyboard (option buttons) | `ANSWERED` | `{type:"choice", optionId, label, index, followUpText?}` |
+| `QUESTION` | operator replies to the bot message (ForceReply) | `ANSWERED` | `{type:"text", text}` (JSON replies are redacted) |
+
+Options may declare `followUpPrompt`: picking that option asks a follow-up question (ForceReply) before the request resolves, and the final answer carries both the option and the typed follow-up text. Option labels must be unique — selections are matched by label. The keyboard is one-time and is explicitly removed on resolution/expiry.
+
+```json
+{
+  "idempotencyKey": "deploy-17",
+  "agentId": "langgraph-demo",
+  "threadId": "thread-42",
+  "toolName": "deploy_service",
+  "kind": "CHOICE",
+  "prompt": "Which environment should payments-api deploy to?",
+  "options": [
+    { "id": "staging", "label": "Staging (eu-west-1)" },
+    { "id": "canary", "label": "Canary (10% traffic)" },
+    { "id": "prod", "label": "Full production" }
+  ],
+  "risk": "CRITICAL",
+  "ttlSeconds": 900
+}
+```
+
+MCP: `ask_human_permission(tool_name, kind?, prompt?, options?, ...)` returns `{ status, answer, approved }` — `ANSWERED` counts as approved (`isError: false`) so the agent branches on `answer` instead of a boolean. Options support `follow_up_prompt` for open-ended choices.
+
 ### Other endpoints
 
 | Method | Path | Purpose |

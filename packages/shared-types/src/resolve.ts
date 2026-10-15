@@ -19,6 +19,7 @@ export async function resolveApproval(
   actorId: string,
   reason: string | null,
   resolvedAt: string = new Date().toISOString(),
+  answerJson: string | null = null,
 ): Promise<ResolveOutcome> {
   const raw = await redis.eval(
     RESOLVE_APPROVAL_LUA,
@@ -28,6 +29,7 @@ export async function resolveApproval(
     actorId,
     resolvedAt,
     reason ?? "",
+    answerJson ?? "",
   );
 
   if (!Array.isArray(raw) || raw.length < 2) {

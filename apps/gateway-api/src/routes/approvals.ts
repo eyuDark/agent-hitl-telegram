@@ -78,6 +78,9 @@ export function approvalRoutes({ redis, queues }: AppContext) {
             tool_args_redacted: redacted as Prisma.InputJsonValue,
             tool_args_hash: argsHash,
             risk: body.risk,
+            kind: body.kind,
+            prompt: body.prompt ?? null,
+            options_json: body.options ? (body.options as Prisma.InputJsonValue) : undefined,
             reason: body.reason ?? null,
             telegram_chat_id: BigInt(chatId),
             callback_url: callbackUrl,
@@ -101,12 +104,19 @@ export function approvalRoutes({ redis, queues }: AppContext) {
           id: row.id,
           shortId,
           status: "PENDING",
+          kind: body.kind,
           agentId: body.agentId,
           threadId: body.threadId,
           toolName: body.toolName,
           risk: body.risk,
           argsHash,
           redactedArgs: JSON.stringify(redacted ?? null),
+          prompt: body.prompt ?? "",
+          options: body.options ? JSON.stringify(body.options) : "",
+          answerJson: "",
+          phase: body.kind === "CHOICE" ? "selection" : "",
+          selectedIndex: "",
+          followUpPrompt: "",
           reason: body.reason ?? "",
           callbackUrl: callbackUrl ?? "",
           chatId,
@@ -272,6 +282,12 @@ export function approvalRoutes({ redis, queues }: AppContext) {
 
         if (outcome.ok) {
           await queues.ttl.remove(`ttl-${shortId}`);
+          const state = await redis.hgetall(redisKeys.request(shortId));
+          if (state.chatId) {
+            await redis
+              .srem(redisKeys.chatIndex(String(state.chatId)), shortId)
+              .catch(() => undefined);
+          }
           await queues.resolution.add(
             "process-resolution",
             {
@@ -281,6 +297,7 @@ export function approvalRoutes({ redis, queues }: AppContext) {
               actorUsername: null,
               resolvedAt: new Date().toISOString(),
               reason: parsed.data.reason ?? null,
+              answerJson: null,
             },
             { jobId: `res-${shortId}` },
           );

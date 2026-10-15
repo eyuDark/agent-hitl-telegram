@@ -30,6 +30,32 @@ server.registerTool(
         .record(z.string(), z.unknown())
         .optional()
         .describe("Tool arguments; secrets are redacted before leaving the gateway"),
+      kind: z
+        .enum(["DECISION", "CHOICE", "QUESTION"])
+        .optional()
+        .describe("DECISION=approve/deny buttons, CHOICE=one of several options, QUESTION=free-text reply"),
+      prompt: z
+        .string()
+        .max(2000)
+        .optional()
+        .describe("Question/prompt shown above the buttons (required for CHOICE/QUESTION)"),
+      options: z
+        .array(
+          z.object({
+            id: z.string().max(24).regex(/^[A-Za-z0-9_-]+$/),
+            label: z.string().min(1).max(64),
+            follow_up_prompt: z
+              .string()
+              .min(1)
+              .max(500)
+              .optional()
+              .describe("If this option is picked, ask the operator this follow-up question"),
+          }),
+        )
+        .min(2)
+        .max(10)
+        .optional()
+        .describe("Options for CHOICE requests (rendered as a native Telegram poll)"),
       thread_id: z
         .string()
         .optional()
@@ -48,13 +74,26 @@ server.registerTool(
         ...(input.reason !== undefined ? { reason: input.reason } : {}),
         ...(input.payload !== undefined ? { toolArgs: input.payload } : {}),
         ...(input.risk !== undefined ? { risk: input.risk } : {}),
+        ...(input.kind !== undefined ? { kind: input.kind } : {}),
+        ...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
+        ...(input.options !== undefined
+          ? {
+              options: input.options.map((option) => ({
+                id: option.id,
+                label: option.label,
+                ...(option.follow_up_prompt !== undefined
+                  ? { followUpPrompt: option.follow_up_prompt }
+                  : {}),
+              })),
+            }
+          : {}),
         ...(input.ttl_seconds !== undefined
           ? { ttlSeconds: input.ttl_seconds }
           : { ttlSeconds: config.defaultTtlSeconds }),
       });
 
       const resolved = await waitForResolution(client, view.shortId);
-      const approved = resolved.status === "APPROVED";
+      const approved = resolved.status === "APPROVED" || resolved.status === "ANSWERED";
 
       return {
         content: [
@@ -63,8 +102,10 @@ server.registerTool(
             text: JSON.stringify(
               {
                 shortId: resolved.shortId,
+                kind: resolved.kind,
                 status: resolved.status,
                 approved,
+                answer: resolved.answer,
                 toolName: resolved.toolName,
                 toolArgsHash: resolved.toolArgsHash,
                 resolvedBy: resolved.resolvedByUsername ?? resolved.resolvedByTelegramId,

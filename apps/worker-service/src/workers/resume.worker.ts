@@ -24,10 +24,12 @@ export function createResumeWorker(connection: Redis): Worker<ResumeJobData> {
       const payload = agentResumePayloadSchema.parse({
         shortId: row.short_id,
         status: row.status,
+        kind: row.kind,
         agentId: row.agent_id,
         threadId: row.thread_id,
         toolName: row.tool_name,
         toolArgsHash: row.tool_args_hash,
+        answer: row.answer_json,
         reason: row.reason,
         resolvedBy:
           row.resolved_by_telegram_id === null ? null : String(row.resolved_by_telegram_id),
