@@ -72,8 +72,11 @@ export function buildApprovalMessage(view: ApprovalView): string {
     );
   }
 
-  if (view.kind === "QUESTION") {
-    sections.push("", "→ Reply directly to this message with your answer.");
+  if (view.kind === "QUESTION" && view.status === "PENDING") {
+    sections.push(
+      "",
+      `→ Reply with "[${view.shortId}] <your answer>". Messages without this request ID are ignored.`,
+    );
   }
 
   sections.push("", `Expires: ${expires}`);
@@ -118,14 +121,15 @@ export function answerSummary(answer?: Answer | null): string {
   return truncate(answer.text, 300);
 }
 
-export function choiceKeyboardRows(
-  options: ChoiceOption[],
-  shortId: string,
-): { text: string; callback_data: string }[][] {
-  return options.map((option, index) => ({
-    text: `${index + 1}. ${option.label}`,
-    callback_data: encodeChoiceCallback(shortId, index),
-  })).map((button) => [button]);
+const REQUEST_TAG_PATTERN = /\[([A-Za-z0-9]{10})\]|#([A-Za-z0-9]{10})/;
+
+export function extractRequestId(text: string): { shortId: string; answerText: string } | null {
+  const match = REQUEST_TAG_PATTERN.exec(text);
+  if (!match) return null;
+  const shortId = match[1] ?? match[2];
+  if (!shortId) return null;
+  const answerText = `${text.slice(0, match.index)}${text.slice(match.index + match[0].length)}`.trim();
+  return { shortId, answerText };
 }
 
 export function parseAnswer(raw: string | undefined): Answer | null {

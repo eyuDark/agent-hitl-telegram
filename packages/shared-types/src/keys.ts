@@ -10,8 +10,6 @@ export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
 export const redisKeys = {
   request: (shortId: string) => `hitl:req:${shortId}`,
   events: (shortId: string) => `hitl:events:${shortId}`,
-  messageIndex: (chatId: string | number, messageId: string | number) =>
-    `hitl:msg:${chatId}:${messageId}`,
   chatIndex: (chatId: string | number) => `hitl:chatidx:${chatId}`,
 } as const;
 

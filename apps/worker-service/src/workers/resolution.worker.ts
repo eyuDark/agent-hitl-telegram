@@ -10,7 +10,7 @@ import {
 } from "@hitl/shared-types";
 import type { Queue } from "bullmq";
 import { prisma } from "../db.js";
-import { bot, removeKeyboard } from "../telegram.js";
+import { bot } from "../telegram.js";
 import { approvalsResolved, resolutionLatency } from "../metrics.js";
 import { rowToView } from "../lib/views.js";
 
@@ -87,12 +87,6 @@ export function createResolutionWorker({
 
       if (state.chatId) {
         await connection.srem(redisKeys.chatIndex(String(state.chatId)), shortId).catch(() => undefined);
-      }
-
-      if (view.kind === "CHOICE" && state.chatId) {
-        await bot.api
-          .sendMessage(state.chatId, `✓ ${stamp}`, { reply_markup: removeKeyboard() })
-          .catch((error) => job.log(`keyboard cleanup failed: ${(error as Error).message}`));
       }
 
       await connection.publish(

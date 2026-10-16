@@ -115,10 +115,10 @@ Response `201` (or `200` on idempotent replay):
 | kind | Operator UI | Terminal status | `answer` shape |
 | --- | --- | --- | --- |
 | `DECISION` | ✅ / ❌ inline buttons | `APPROVED` / `DENIED` | `{type:"approval", decision}` |
-| `CHOICE` | tap-to-select reply keyboard (option buttons) | `ANSWERED` | `{type:"choice", optionId, label, index, followUpText?}` |
-| `QUESTION` | operator replies to the bot message (ForceReply) | `ANSWERED` | `{type:"text", text}` (JSON replies are redacted) |
+| `CHOICE` | stacked inline option buttons under the request message | `ANSWERED` | `{type:"choice", optionId, label, index, followUpText?}` |
+| `QUESTION` | operator replies in chat with the request ID tagged (`[shortId] …`) | `ANSWERED` | `{type:"text", text}` (JSON replies are redacted) |
 
-Options may declare `followUpPrompt`: picking that option asks a follow-up question (ForceReply) before the request resolves, and the final answer carries both the option and the typed follow-up text. Option labels must be unique — selections are matched by label. The keyboard is one-time and is explicitly removed on resolution/expiry.
+Options may declare `followUpPrompt`: picking that option asks a follow-up question before the request resolves, and the final answer carries both the option and the typed follow-up text. Each message carries its own inline keyboard, so multiple concurrent requests stack cleanly in the chat and taps are correlated by the request ID embedded in the button's callback data — never by label text. Open-text answers (QUESTION and follow-ups) must be tagged with `[shortId]` (or `#shortId`); messages without a valid pending request ID are ignored.
 
 ```json
 {

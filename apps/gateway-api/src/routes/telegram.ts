@@ -4,6 +4,7 @@ import {
   answerSchema,
   approvalEventSchema,
   decodeCallback,
+  extractRequestId,
   parseOptions,
   redactArgs,
   redisKeys,
@@ -39,7 +40,6 @@ type TelegramUpdate = {
     message_id: number;
     chat: { id: number };
     text?: string;
-    reply_to_message?: { message_id: number };
     from?: { id: number; username?: string; first_name?: string };
   };
 };
@@ -59,11 +59,8 @@ export function telegramWebhookRoutes({ bot, redis, queues }: WebhookContext) {
       const update = (req.body ?? {}) as TelegramUpdate;
       const ctx: RouteContext = { app, bot, redis, queues, reply };
 
-      if (update.message?.reply_to_message) {
-        return handleTextReply(ctx, update);
-      }
       if (update.message) {
-        return handleSelectionText(ctx, update);
+        return handleTextAnswer(ctx, update);
       }
       if (update.callback_query) {
         return handleCallback(ctx, update);
@@ -73,112 +70,146 @@ export function telegramWebhookRoutes({ bot, redis, queues }: WebhookContext) {
   };
 }
 
-async function handleSelectionText(
+async function handleChoiceCallback(
   ctx: RouteContext,
-  update: TelegramUpdate,
+  cb: NonNullable<TelegramUpdate["callback_query"]>,
+  shortId: string,
+  index: number,
 ): Promise<FastifyReply> {
   const { app, bot, redis, queues, reply } = ctx;
-  const message = update.message!;
-  const from = message.from;
-  const text = message.text?.trim();
+  const actorId = cb.from.id;
+  const actorUsername = cb.from.username ?? cb.from.first_name ?? null;
+  const state = await redis.hgetall(redisKeys.request(shortId));
 
-  if (!from || !text || !config.allowedTelegramIds.includes(from.id)) {
-    if (from && !config.allowedTelegramIds.includes(from.id)) {
-      approvalWebhookOutcomes.inc({ outcome: "forbidden_actor" });
+  if (state.status !== "PENDING" || state.kind !== "CHOICE") {
+    if (state.status && state.status !== "PENDING") {
+      approvalWebhookOutcomes.inc({ outcome: "already_resolved" });
+      await bot.api
+        .answerCallbackQuery(cb.id, {
+          text: `ℹ️ Already marked as ${state.status}.`,
+          show_alert: true,
+        })
+        .catch(() => undefined);
+    } else {
+      approvalWebhookOutcomes.inc({ outcome: "not_found" });
+      await bot.api
+        .answerCallbackQuery(cb.id, {
+          text: "⚠️ Request expired or no longer exists.",
+          show_alert: true,
+        })
+        .catch(() => undefined);
     }
     return reply.code(200).send({ ok: true });
   }
 
-  const members = await redis.smembers(redisKeys.chatIndex(String(message.chat.id)));
+  if (state.phase === "awaiting_followup") {
+    await bot.api
+      .answerCallbackQuery(cb.id, {
+        text: "ℹ️ Option already selected — please answer the follow-up question.",
+      })
+      .catch(() => undefined);
+    return reply.code(200).send({ ok: true });
+  }
 
-  for (const shortId of members) {
-    const state = await redis.hgetall(redisKeys.request(shortId));
-    if (
-      state.status !== "PENDING" ||
-      state.kind !== "CHOICE" ||
-      state.phase === "awaiting_followup"
-    ) {
-      continue;
+  const options = parseOptions(state.options);
+  const option: ChoiceOption | undefined = options?.[index];
+  if (!option) {
+    await bot.api
+      .answerCallbackQuery(cb.id, { text: "⚠️ Unknown option.", show_alert: true })
+      .catch(() => undefined);
+    return reply.code(200).send({ ok: true });
+  }
+
+  const nowIso = new Date().toISOString();
+
+  if (option.followUpPrompt) {
+    await redis.hset(redisKeys.request(shortId), {
+      phase: "awaiting_followup",
+      selectedIndex: String(index),
+      followUpPrompt: option.followUpPrompt,
+    });
+    if (cb.message?.text && cb.message.chat && cb.message.message_id != null) {
+      await bot.api
+        .editMessageText(String(cb.message.chat.id), cb.message.message_id, cb.message.text, {
+          reply_markup: { inline_keyboard: [] },
+        })
+        .catch(() => undefined);
     }
+    const followUpText = `${option.followUpPrompt}\n\n(Selected: ${option.label})\n→ Reply with "[${shortId}] <your answer>". Messages without this request ID are ignored.`;
+    await bot.api.sendMessage(String(state.chatId), followUpText).catch(() => undefined);
+    await bot.api.answerCallbackQuery(cb.id, { text: `✓ ${option.label}` }).catch(() => undefined);
+    approvalWebhookOutcomes.inc({ outcome: "followup_sent" });
+    app.log.info({ shortId, optionId: option.id }, "follow-up question sent");
+    return reply.code(200).send({ ok: true });
+  }
 
-    const options = parseOptions(state.options);
-    if (!options) continue;
-    const index = options.findIndex((option) => option.label === text);
-    if (index < 0) continue;
+  const finalAnswer: Answer = {
+    type: "choice",
+    optionId: option.id,
+    label: option.label,
+    index,
+  };
+  const answerJson = JSON.stringify(answerSchema.parse(finalAnswer));
 
-    const option = options[index] as ChoiceOption;
-    const actorUsername = from.username ?? from.first_name ?? null;
-    const nowIso = new Date().toISOString();
+  const outcome = await resolveApproval(
+    redis,
+    shortId,
+    "ANSWERED",
+    String(actorId),
+    null,
+    nowIso,
+    answerJson,
+  );
 
-    if (option.followUpPrompt) {
-      await redis.hset(redisKeys.request(shortId), {
-        phase: "awaiting_followup",
-        selectedIndex: String(index),
-        followUpPrompt: option.followUpPrompt,
-      });
-      const followUpText = `${option.followUpPrompt}\n\n(Selected: ${option.label})\n→ Reply to this message to answer.`;
-      const followUpMessage = await bot.api.sendMessage(String(state.chatId), followUpText, {
-        reply_markup: {
-          force_reply: true,
-          selective: true,
-          input_field_placeholder: "Type your answer…",
-        },
-      });
-      await redis.set(
-        redisKeys.messageIndex(String(state.chatId), followUpMessage.message_id),
-        shortId,
-        "EX",
-        86_400,
-      );
-      approvalWebhookOutcomes.inc({ outcome: "followup_sent" });
-      app.log.info({ shortId, optionId: option.id }, "follow-up question sent");
-      return reply.code(200).send({ ok: true });
-    }
+  if (!outcome.ok && outcome.error === "NOT_FOUND") {
+    approvalWebhookOutcomes.inc({ outcome: "not_found" });
+    await bot.api
+      .answerCallbackQuery(cb.id, {
+        text: "⚠️ Request expired or no longer exists.",
+        show_alert: true,
+      })
+      .catch(() => undefined);
+    return reply.code(200).send({ ok: true });
+  }
 
-    const finalAnswer: Answer = {
-      type: "choice",
-      optionId: option.id,
-      label: option.label,
-      index,
-    };
-    const answerJson = JSON.stringify(answerSchema.parse(finalAnswer));
+  if (!outcome.ok && outcome.error === "ALREADY_RESOLVED") {
+    approvalWebhookOutcomes.inc({ outcome: "already_resolved" });
+    await bot.api
+      .answerCallbackQuery(cb.id, {
+        text: `ℹ️ Already marked as ${outcome.status}.`,
+        show_alert: true,
+      })
+      .catch(() => undefined);
+    return reply.code(200).send({ ok: true });
+  }
 
-    const outcome = await resolveApproval(
-      redis,
+  if (!outcome.ok) {
+    approvalWebhookOutcomes.inc({ outcome: "unknown_error" });
+    app.log.error({ shortId, raw: outcome.raw }, "unexpected lua result");
+    return reply.code(500).send({ error: "Failed to resolve request" });
+  }
+
+  approvalWebhookOutcomes.inc({ outcome: "answered" });
+  await queues.ttl.remove(`ttl-${shortId}`).catch(() => undefined);
+  if (state.chatId) {
+    await redis.srem(redisKeys.chatIndex(String(state.chatId)), shortId).catch(() => undefined);
+  }
+  await queues.resolution.add(
+    "process-resolution",
+    {
       shortId,
-      "ANSWERED",
-      String(from.id),
-      null,
-      nowIso,
+      newStatus: "ANSWERED",
+      actorId: String(actorId),
+      actorUsername,
+      resolvedAt: nowIso,
+      reason: null,
       answerJson,
-    );
-    if (!outcome.ok) {
-      approvalWebhookOutcomes.inc({
-        outcome: outcome.error === "ALREADY_RESOLVED" ? "already_resolved" : "not_found",
-      });
-      return reply.code(200).send({ ok: true });
-    }
+    },
+    { jobId: `res-${shortId}` },
+  );
 
-    approvalWebhookOutcomes.inc({ outcome: "answered" });
-    await queues.ttl.remove(`ttl-${shortId}`).catch(() => undefined);
-    await queues.resolution.add(
-      "process-resolution",
-      {
-        shortId,
-        newStatus: "ANSWERED",
-        actorId: String(from.id),
-        actorUsername,
-        resolvedAt: nowIso,
-        reason: null,
-        answerJson,
-      },
-      { jobId: `res-${shortId}` },
-    );
-
-    app.log.info({ shortId, optionId: option.id }, "choice answered via keyboard selection");
-    return reply.code(200).send({ ok: true });
-  }
-
+  await bot.api.answerCallbackQuery(cb.id, { text: `✓ ${option.label}` }).catch(() => undefined);
+  app.log.info({ shortId, optionId: option.id, actorId }, "choice answered via inline button");
   return reply.code(200).send({ ok: true });
 }
 
@@ -201,6 +232,10 @@ async function handleCallback(ctx: RouteContext, update: TelegramUpdate): Promis
 
   const parsedCallback = decodeCallback(cb.data);
   if (!parsedCallback) return reply.code(200).send({ ok: true });
+
+  if (parsedCallback.action === "choice") {
+    return handleChoiceCallback(ctx, cb, parsedCallback.shortId, parsedCallback.index);
+  }
 
   const { shortId } = parsedCallback;
   const nowIso = new Date().toISOString();
@@ -276,24 +311,24 @@ async function handleCallback(ctx: RouteContext, update: TelegramUpdate): Promis
   return reply.code(200).send({ ok: true });
 }
 
-async function handleTextReply(ctx: RouteContext, update: TelegramUpdate): Promise<FastifyReply> {
+async function handleTextAnswer(ctx: RouteContext, update: TelegramUpdate): Promise<FastifyReply> {
   const { app, redis, queues, reply } = ctx;
   const message = update.message!;
   const from = message.from;
+  const text = message.text?.trim();
 
-  if (!from || !config.allowedTelegramIds.includes(from.id)) {
+  if (!from || !text) return reply.code(200).send({ ok: true });
+
+  if (!config.allowedTelegramIds.includes(from.id)) {
     approvalWebhookOutcomes.inc({ outcome: "forbidden_actor" });
     return reply.code(200).send({ ok: true });
   }
 
-  const repliedMessageId = message.reply_to_message?.message_id;
-  const text = message.text?.trim();
-  if (!repliedMessageId || !text) return reply.code(200).send({ ok: true });
+  const extracted = extractRequestId(text);
+  if (!extracted) return reply.code(200).send({ ok: true });
 
-  const shortId = await redis.get(
-    redisKeys.messageIndex(String(message.chat.id), String(repliedMessageId)),
-  );
-  if (!shortId) return reply.code(200).send({ ok: true });
+  const { shortId, answerText } = extracted;
+  if (!answerText) return reply.code(200).send({ ok: true });
 
   const state = await redis.hgetall(redisKeys.request(shortId));
   if (state.status !== "PENDING") return reply.code(200).send({ ok: true });
@@ -304,7 +339,7 @@ async function handleTextReply(ctx: RouteContext, update: TelegramUpdate): Promi
 
   const actorUsername = from.username ?? from.first_name ?? null;
   const nowIso = new Date().toISOString();
-  const sanitized = sanitizeAnswerText(text);
+  const sanitized = sanitizeAnswerText(answerText);
 
   let finalAnswer: Answer;
   if (isFollowUp) {

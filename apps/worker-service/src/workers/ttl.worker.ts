@@ -70,15 +70,6 @@ export function createTtlWorker({ connection, resumeQueue }: TtlContext): Worker
         await connection
           .srem(redisKeys.chatIndex(String(state.chatId)), shortId)
           .catch(() => undefined);
-        if (row?.kind === "CHOICE") {
-          await bot.api
-            .sendMessage(
-              state.chatId,
-              `⏳ Request [${shortId}] expired — selection no longer valid.`,
-              { reply_markup: { remove_keyboard: true, selective: true } },
-            )
-            .catch(() => undefined);
-        }
       }
 
       await connection.publish(

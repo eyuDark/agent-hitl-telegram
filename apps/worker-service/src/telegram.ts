@@ -1,4 +1,5 @@
 import { Bot, InlineKeyboard } from "grammy";
+import { encodeChoiceCallback } from "@hitl/shared-types";
 import { config } from "./config.js";
 
 export const bot = new Bot(config.telegramBotToken);
@@ -9,32 +10,10 @@ export function decisionKeyboard(shortId: string): InlineKeyboard {
     .text("❌ Deny", `act:dn:${shortId}`);
 }
 
-export function selectionKeyboard(options: { label: string }[]): {
-  keyboard: { text: string }[][];
-  resize_keyboard: true;
-  one_time_keyboard: true;
-  input_field_placeholder: string;
-} {
-  return {
-    keyboard: options.map((option) => [{ text: option.label }]),
-    resize_keyboard: true,
-    one_time_keyboard: true,
-    input_field_placeholder: "Select an option…",
-  };
-}
-
-export function questionReplyMarkup(): {
-  force_reply: true;
-  selective: true;
-  input_field_placeholder: string;
-} {
-  return {
-    force_reply: true,
-    selective: true,
-    input_field_placeholder: "Type your answer…",
-  };
-}
-
-export function removeKeyboard(): { remove_keyboard: true; selective: true } {
-  return { remove_keyboard: true, selective: true };
+export function choiceKeyboard(options: { label: string }[], shortId: string): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  options.forEach((option, index) => {
+    keyboard.text(option.label, encodeChoiceCallback(shortId, index));
+  });
+  return keyboard;
 }

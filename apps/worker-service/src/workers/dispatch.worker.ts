@@ -9,7 +9,7 @@ import {
   type RequestHashData,
 } from "@hitl/shared-types";
 import { prisma } from "../db.js";
-import { bot, decisionKeyboard, questionReplyMarkup, selectionKeyboard } from "../telegram.js";
+import { bot, choiceKeyboard, decisionKeyboard } from "../telegram.js";
 import { dispatchLatency } from "../metrics.js";
 
 export function createDispatchWorker(redis: Redis): Worker<DispatchJobData> {
@@ -39,13 +39,12 @@ export function createDispatchWorker(redis: Redis): Worker<DispatchJobData> {
 
       if (view.kind === "QUESTION") {
         message = await bot.api.sendMessage(chatId, text, {
-          reply_markup: questionReplyMarkup(),
           link_preview_options: { is_disabled: true },
         });
       } else if (view.kind === "CHOICE") {
         const options = parseOptions(state.options) ?? view.options ?? [];
         message = await bot.api.sendMessage(chatId, text, {
-          reply_markup: selectionKeyboard(options),
+          reply_markup: choiceKeyboard(options, shortId),
           link_preview_options: { is_disabled: true },
         });
       } else {
@@ -59,7 +58,6 @@ export function createDispatchWorker(redis: Redis): Worker<DispatchJobData> {
       await redis
         .multi()
         .hset(key, { messageId: String(message.message_id), originalText: text })
-        .set(redisKeys.messageIndex(chatId, message.message_id), shortId, "EX", 86_400)
         .sadd(redisKeys.chatIndex(chatId), shortId)
         .expire(redisKeys.chatIndex(chatId), 86_400)
         .exec();

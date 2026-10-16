@@ -55,7 +55,7 @@ server.registerTool(
         .min(2)
         .max(10)
         .optional()
-        .describe("Options for CHOICE requests (rendered as a native Telegram poll)"),
+        .describe("Options for CHOICE requests (rendered as inline buttons under the request message)"),
       thread_id: z
         .string()
         .optional()
