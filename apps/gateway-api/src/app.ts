@@ -7,6 +7,8 @@ import { config } from "./config.js";
 import { httpDuration } from "./metrics.js";
 import { approvalRoutes } from "./routes/approvals.js";
 import { telegramWebhookRoutes } from "./routes/telegram.js";
+import { agentMessageRoutes } from "./routes/agent-messages.js";
+import { remoteModeRoutes } from "./routes/remote.js";
 import { systemRoutes } from "./routes/system.js";
 import type { GatewayQueues } from "./queues.js";
 
@@ -60,6 +62,8 @@ export function buildApp({ redis, queues, bot }: BuildAppContext): FastifyInstan
   void app.register(systemRoutes(bot));
   void app.register(approvalRoutes({ redis, queues }));
   void app.register(telegramWebhookRoutes({ bot, redis, queues }));
+  void app.register(agentMessageRoutes({ redis, queues }));
+  void app.register(remoteModeRoutes({ redis, bot }));
 
   return app;
 }

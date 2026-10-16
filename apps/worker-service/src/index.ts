@@ -8,6 +8,7 @@ import { createDispatchWorker } from "./workers/dispatch.worker.js";
 import { createTtlWorker } from "./workers/ttl.worker.js";
 import { createResolutionWorker } from "./workers/resolution.worker.js";
 import { createResumeWorker } from "./workers/resume.worker.js";
+import { createOutboundWorker } from "./workers/telegram-outbound.worker.js";
 
 async function main(): Promise<void> {
   const connection = createRedisConnection(config.redisUrl);
@@ -17,9 +18,10 @@ async function main(): Promise<void> {
 
   const workers = [
     createDispatchWorker(connection),
-    createTtlWorker({ connection, resumeQueue: queues.resume }),
+    createTtlWorker({ connection, resumeQueue: queues.resume, ttlQueue: queues.ttl }),
     createResolutionWorker({ connection, resumeQueue: queues.resume }),
     createResumeWorker(connection),
+    createOutboundWorker(connection),
   ];
 
   for (const worker of workers) {
@@ -73,6 +75,7 @@ async function main(): Promise<void> {
       queues.ttl.close(),
       queues.resolution.close(),
       queues.resume.close(),
+      queues.outbound.close(),
     ]);
     await connection.quit();
     await prisma.$disconnect();

@@ -29,6 +29,7 @@ async function main(): Promise<void> {
       queues.ttl.close(),
       queues.resolution.close(),
       queues.resume.close(),
+      queues.outbound.close(),
     ]);
     await redis.quit();
     await prisma.$disconnect();

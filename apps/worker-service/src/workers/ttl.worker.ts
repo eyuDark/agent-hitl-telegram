@@ -3,6 +3,7 @@ import type { Redis } from "ioredis";
 import {
   approvalEventSchema,
   buildApprovalMessage,
+  isRemoteModeOn,
   redisKeys,
   resolveApproval,
   resolutionStamp,
@@ -11,19 +12,40 @@ import {
 import type { Queue } from "bullmq";
 import { prisma } from "../db.js";
 import { bot } from "../telegram.js";
-import { approvalsResolved } from "../metrics.js";
+import { config } from "../config.js";
+import { approvalsResolved, ttlPostponed } from "../metrics.js";
 import { rowToView } from "../lib/views.js";
 
 type TtlContext = {
   connection: Redis;
   resumeQueue: Queue<{ shortId: string }>;
+  ttlQueue: Queue<TtlJobData>;
 };
 
-export function createTtlWorker({ connection, resumeQueue }: TtlContext): Worker<TtlJobData> {
+export function createTtlWorker({
+  connection,
+  resumeQueue,
+  ttlQueue,
+}: TtlContext): Worker<TtlJobData> {
   return new Worker<TtlJobData>(
     "hitl-ttl-queue",
     async (job) => {
       const { shortId } = job.data;
+
+      if (await isRemoteModeOn(connection)) {
+        const postponed = (job.data.postponed ?? 0) + 1;
+        ttlPostponed.inc();
+        await ttlQueue.add(
+          "recheck-ttl",
+          { shortId, postponed },
+          {
+            jobId: `ttl-${shortId}-p${postponed}`,
+            delay: config.remoteTtlRecheckSeconds * 1000,
+          },
+        );
+        job.log(`remote mode active — postponed expiry re-check ${postponed} for ${shortId}`);
+        return;
+      }
 
       const outcome = await resolveApproval(
         connection,

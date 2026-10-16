@@ -196,6 +196,15 @@ export type DispatchJobData = {
 
 export type TtlJobData = {
   shortId: string;
+  postponed?: number;
+};
+
+export type OutboundJobData = {
+  chatId: string;
+  agentId: string;
+  threadId: string;
+  message: string;
+  createdAt: string;
 };
 
 export type ResolutionJobData = {

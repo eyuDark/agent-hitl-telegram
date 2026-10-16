@@ -10,6 +10,7 @@ const envSchema = z.object({
   ALLOWED_TELEGRAM_IDS: z.string().optional(),
   HMAC_SECRET: z.string().min(8).default("insecure-dev-hmac-secret"),
   WORKER_METRICS_PORT: z.coerce.number().int().min(1).max(65_535).default(9464),
+  REMOTE_TTL_RECHECK_SECONDS: z.coerce.number().int().min(5).max(3600).default(60),
 });
 
 const env = loadEnv(envSchema);
@@ -23,4 +24,5 @@ export const config = {
   allowedTelegramIds: parseIdList(env.ALLOWED_TELEGRAM_IDS),
   hmacSecret: env.HMAC_SECRET,
   metricsPort: env.WORKER_METRICS_PORT,
+  remoteTtlRecheckSeconds: env.REMOTE_TTL_RECHECK_SECONDS,
 } as const;

@@ -1,10 +1,14 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
+import { Prisma } from "@prisma/client";
 import { Bot } from "grammy";
 import {
   answerSchema,
   approvalEventSchema,
   decodeCallback,
   extractRequestId,
+  generateShortId,
+  getRemoteMode,
+  hashToolArgs,
   parseOptions,
   redactArgs,
   redisKeys,
@@ -14,6 +18,7 @@ import {
   type ChoiceOption,
 } from "@hitl/shared-types";
 import { config } from "../config.js";
+import { prisma } from "../db.js";
 import { approvalWebhookOutcomes } from "../metrics.js";
 
 type Redis = import("ioredis").Redis;
@@ -325,7 +330,11 @@ async function handleTextAnswer(ctx: RouteContext, update: TelegramUpdate): Prom
   }
 
   const extracted = extractRequestId(text);
-  if (!extracted) return reply.code(200).send({ ok: true });
+  if (!extracted) {
+    const done = await handleOperatorSteering(ctx, message, from, text);
+    if (done) approvalWebhookOutcomes.inc({ outcome: "steered" });
+    return reply.code(200).send({ ok: true });
+  }
 
   const { shortId, answerText } = extracted;
   if (!answerText) return reply.code(200).send({ ok: true });
@@ -401,6 +410,104 @@ async function handleTextAnswer(ctx: RouteContext, update: TelegramUpdate): Prom
   );
   return reply.code(200).send({ ok: true });
 }
+
+async function handleOperatorSteering(
+  ctx: RouteContext,
+  message: NonNullable<TelegramUpdate["message"]>,
+  actor: NonNullable<NonNullable<TelegramUpdate["message"]>["from"]>,
+  text: string,
+): Promise<boolean> {
+  const { app, bot, redis, queues } = ctx;
+  const chatId = String(message.chat.id);
+
+  const remote = await getRemoteMode(redis);
+  if (!remote.enabled) return false;
+
+  if (!remote.agentId) {
+    await bot.api
+      .sendMessage(
+        chatId,
+        "🛰 Remote mode is ON but no agent session is bound. Re-trigger remote mode from the PC with an agentId.",
+        { link_preview_options: { is_disabled: true } },
+      )
+      .catch(() => undefined);
+    return false;
+  }
+
+  const agentId = remote.agentId;
+  const threadId = remote.threadId ?? `remote-${agentId}`;
+  const shortId = generateShortId();
+  const nowIso = new Date().toISOString();
+  const actorUsername = actor.username ?? actor.first_name ?? null;
+
+  let callbackUrl = remote.callbackUrl;
+  if (!callbackUrl) {
+    const lastRow = await prisma.approval_requests.findFirst({
+      where: { agent_id: agentId, callback_url: { not: null } },
+      orderBy: { created_at: "desc" },
+      select: { callback_url: true },
+    });
+    callbackUrl = lastRow?.callback_url ?? null;
+  }
+
+  const toolArgs = { message: text };
+  const argsHash = hashToolArgs(toolArgs);
+  const redacted = redactArgs(toolArgs);
+  const finalAnswer: Answer = {
+    type: "text",
+    text: text.slice(0, MAX_ANSWER_LENGTH),
+  };
+
+  try {
+    await prisma.approval_requests.create({
+      data: {
+        short_id: shortId,
+        idempotency_key: `op-${shortId}`,
+        agent_id: agentId,
+        thread_id: threadId,
+        tool_name: "operator_message",
+        tool_args_redacted: redacted as Prisma.InputJsonValue,
+        tool_args_hash: argsHash,
+        risk: "LOW",
+        kind: "QUESTION",
+        status: "ANSWERED",
+        prompt: text.slice(0, 2000),
+        answer_json: finalAnswer,
+        resolution_reason: "operator steering (remote mode)",
+        resolved_by_telegram_id: BigInt(actor.id),
+        resolved_by_username: actorUsername,
+        resolved_at: new Date(nowIso),
+        telegram_chat_id: BigInt(chatId),
+        callback_url: callbackUrl,
+        expires_at: new Date(Date.parse(nowIso) + 300_000),
+      },
+    });
+  } catch (error) {
+    app.log.error({ err: error, shortId }, "failed to persist operator steering message");
+    return false;
+  }
+
+  await bot.api
+    .sendMessage(chatId, `🛰 → ${agentId} · ${threadId}\n[${shortId}]`)
+    .catch(() => undefined);
+
+  if (callbackUrl) {
+    await queues.resume
+      .add(
+        "resume-agent",
+        { shortId },
+        { jobId: `resume-${shortId}-ANSWERED` },
+      )
+      .catch((error) => app.log.error({ err: error, shortId }, "failed to enqueue steering resume"));
+  }
+
+  app.log.info(
+    { shortId, agentId, threadId, actorId: actor.id, callbackUrl },
+    "operator steering delivered",
+  );
+  return true;
+}
+
 
 function acknowledgment(status: "APPROVED" | "DENIED"): string {
   return status === "APPROVED" ? "✅ Approved" : "❌ Denied";

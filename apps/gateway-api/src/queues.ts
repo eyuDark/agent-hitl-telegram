@@ -3,6 +3,7 @@ import type { Redis } from "ioredis";
 import {
   QUEUE_NAMES,
   type DispatchJobData,
+  type OutboundJobData,
   type ResumeJobData,
   type ResolutionJobData,
   type TtlJobData,
@@ -20,6 +21,7 @@ export type GatewayQueues = {
   ttl: Queue<TtlJobData>;
   resolution: Queue<ResolutionJobData>;
   resume: Queue<ResumeJobData>;
+  outbound: Queue<OutboundJobData>;
 };
 
 export function createQueues(connection: Redis): GatewayQueues {
@@ -37,6 +39,10 @@ export function createQueues(connection: Redis): GatewayQueues {
       defaultJobOptions,
     }),
     resume: new Queue<ResumeJobData>(QUEUE_NAMES.resume, {
+      connection,
+      defaultJobOptions,
+    }),
+    outbound: new Queue<OutboundJobData>(QUEUE_NAMES.outbound, {
       connection,
       defaultJobOptions,
     }),

@@ -151,7 +151,37 @@ MCP: `ask_human_permission(tool_name, kind?, prompt?, options?, ...)` returns `{
 | POST | `/v1/webhooks/telegram` | Telegram callback receiver (`X-Telegram-Bot-Api-Secret-Token`) |
 | POST | `/v1/admin/telegram/set-webhook` | Registers the bot webhook with the secret token |
 | POST | `/v1/notifications/task-complete` | Agent completion notifications (MCP `notify_task_complete`) |
+| POST | `/v1/notifications/agent-message` | Agent progress push to Telegram (remote mode) |
+| POST | `/v1/admin/remote-mode` | Remote mode toggle (PC-trigger; spawns a Telegram session) |
+| GET | `/v1/admin/remote-mode` | Remote mode state snapshot |
+| GET | `/v1/remote/messages?agentId=&threadId=&since=` | Recent operator steering directives (for MCP agents) |
+| GET | `/v1/remote/callback-url/:agentId` | Most recent resume `callbackUrl` registered by an agent |
 | GET | `/healthz`, `/metrics` | Liveness + Prometheus metrics |
+
+## Remote mode
+
+Remote mode turns the Telegram bot into the agent's operator console: trigger it from the PC, unbind
+from the laptop, and keep steering the agent over the bot until you explicitly turn it off.
+
+```http
+POST /v1/admin/remote-mode
+x-api-key: <gateway api key>
+
+{
+  "enabled": true,
+  "agentId": "claude-code",
+  "threadId": "thread-42",
+  "callbackUrl": "https://agent.example.com/webhooks/hitl-resume",
+  "reason": "going for a run"
+}
+```
+
+- **Session spawn.** Enabling binds an agent session (`agentId` + optional `threadId`) to the Telegram chat (`chatId`, default: `DEFAULT_TELEGRAM_CHAT_ID`) and pushes a `🛰 Remote mode ON` notice. Disabling routes back to normal and stamps `disabledAt`. The flag persists for 24h max (`hitl:remote` Redis hash) — a dead-man switch so remote mode can never silently outlive you; re-trigger to extend.
+- **Outbound: agent responses → bot.** While enabled, agents call MCP `send_operator_message(message, thread_id?)` (or `POST /v1/notifications/agent-message`) and the gateway enqueues `hitl-telegram-outbound`, which the worker delivers to the chat. When remote mode is off the same call acks `{ delivered: false, reason: "remote_mode_off" }` — no accidental routing.
+- **Inbound: operator steering → agent.** Any non-tagged text message from an allowed operator while remote mode is on becomes a directive: the gateway persists an `operator_message` row (`kind=QUESTION`, `status=ANSWERED`) in the ledger and enqueues the signed `resume` callback so webhook agents receive the instruction. Agents running on stdio (Claude Code / OpenCode) pull them via MCP `check_operator_messages` or `GET /v1/remote/messages`. Tagged messages (`[shortId] …`) keep answering pending approvals as usual.
+- **TTL hold.** While remote mode is active, the TTL worker postpones expiry (re-check every `REMOTE_TTL_RECHECK_SECONDS`) instead of firing the dead-man's switch — an unanswered approval during your run doesn't auto-deny. Switching remote mode off resumes normal expiry within one re-check.
+- **Permissions stay gated.** Remote mode changes the channel, never the security model: approve/deny still flows through the Redis CAS, the approver list, shared-secret webhooks, HMAC-signed resumes, and the runbook toolargs hash re-check.
+
 
 ### Resume callback
 
@@ -206,6 +236,8 @@ Tools exposed:
 
 - `ask_human_permission(tool_name, reason?, payload?, thread_id?, risk?, ttl_seconds?)` — blocks until Telegram resolution (Redis pub/sub, poll fallback) and returns `{ status, approved, resolvedBy, ... }`. Non-APPROVED outcomes return `isError: true`.
 - `notify_task_complete(summary, thread_id?)` — reports completion to the gateway.
+- `send_operator_message(message, thread_id?)` — pushes an interim update to the Telegram chat while remote mode is on (`{ delivered; reason? }` otherwise).
+- `check_operator_messages(thread_id?, since?, limit?)` — pulls recent operator steering directives sent over Telegram during a remote session.
 
 ## TypeScript SDK
 

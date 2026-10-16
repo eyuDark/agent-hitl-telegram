@@ -3,6 +3,7 @@ export const QUEUE_NAMES = {
   ttl: "hitl-ttl-queue",
   resolution: "hitl-resolution-queue",
   resume: "agent-resume-queue",
+  outbound: "hitl-telegram-outbound",
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -11,6 +12,8 @@ export const redisKeys = {
   request: (shortId: string) => `hitl:req:${shortId}`,
   events: (shortId: string) => `hitl:events:${shortId}`,
   chatIndex: (chatId: string | number) => `hitl:chatidx:${chatId}`,
+  remoteMessages: (agentId: string, threadId: string) =>
+    `hitl:remote:msgs:${agentId || "*"}:${threadId || "*"}`,
 } as const;
 
 export const HASH_FIELD = {

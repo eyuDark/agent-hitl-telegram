@@ -31,3 +31,9 @@ export const resumeDeliveries = new Counter({
   labelNames: ["outcome"] as const,
   registers: [registry],
 });
+
+export const ttlPostponed = new Counter({
+  name: "hitl_ttl_postponed_total",
+  help: "TTL expiry postponements while remote mode is active",
+  registers: [registry],
+});

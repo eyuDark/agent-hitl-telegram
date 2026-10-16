@@ -191,6 +191,123 @@ server.registerTool(
   },
 );
 
+server.registerTool(
+  "send_operator_message",
+  {
+    title: "Send operator message",
+    description:
+      "Stream an interim update, progress note, or result to the human operator over Telegram. " +
+      "Delivered only while remote mode is enabled on the gateway; otherwise acknowledged but not delivered.",
+    inputSchema: {
+      message: z.string().min(1).max(4000).describe("Plain-text message for the operator"),
+      thread_id: z
+        .string()
+        .optional()
+        .describe("Workflow/thread identifier; defaults to the active MCP thread"),
+    },
+  },
+  async (input) => {
+    try {
+      const response = await fetch(
+        `${config.gatewayUrl.replace(/\/+$/, "")}/v1/notifications/agent-message`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...(config.apiKey ? { "x-api-key": config.apiKey } : {}),
+          },
+          body: JSON.stringify({
+            agentId: config.agentId,
+            threadId: input.thread_id ?? "mcp-remote",
+            message: input.message,
+          }),
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+      const body = (await response.json().catch(() => undefined)) as {
+        delivered?: boolean;
+        reason?: string;
+      } | undefined;
+      const delivered = body?.delivered === true;
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              ok: response.ok,
+              delivered,
+              status: response.status,
+              ...(body?.reason ? { reason: body.reason } : {}),
+            }),
+          },
+        ],
+        ...(response.ok ? {} : { isError: true }),
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text" as const, text: (error as Error).message }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.registerTool(
+  "check_operator_messages",
+  {
+    title: "Check operator messages",
+    description:
+      "Pull recent operator steering directives sent over Telegram (remote mode). " +
+      "Call periodically during remote sessions to stay aligned with the operator.",
+    inputSchema: {
+      thread_id: z.string().optional().describe("Filter to a specific thread"),
+      since: z
+        .string()
+        .optional()
+        .describe("ISO timestamp; return only directives created after it"),
+      limit: z.number().int().min(1).max(100).optional(),
+      wait_seconds: z
+        .number()
+        .int()
+        .min(0)
+        .max(60)
+        .optional()
+        .describe("Long-poll: hold the request up to N seconds waiting for new directives"),
+    },
+  },
+  async (input) => {
+    try {
+      const params = new URLSearchParams();
+      if (input.thread_id) params.set("threadId", input.thread_id);
+      if (input.since) params.set("since", input.since);
+      if (input.limit) params.set("limit", String(input.limit));
+      if (input.wait_seconds) params.set("waitSeconds", String(input.wait_seconds));
+      const response = await fetch(
+        `${config.gatewayUrl.replace(/\/+$/, "")}/v1/remote/messages?${params.toString()}`,
+        {
+          headers: config.apiKey ? { "x-api-key": config.apiKey } : {},
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+      const body: unknown = await response.json().catch(() => undefined);
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({ status: response.status, messages: body }, null, 2),
+          },
+        ],
+        ...(response.ok ? {} : { isError: true }),
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text" as const, text: (error as Error).message }],
+        isError: true,
+      };
+    }
+  },
+);
+
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);

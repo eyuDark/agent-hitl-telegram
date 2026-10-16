@@ -11,6 +11,20 @@ export const approvalsCreated = new Counter({
   registers: [registry],
 });
 
+export const remoteModeToggles = new Counter({
+  name: "hitl_remote_mode_toggles_total",
+  help: "Remote mode state transitions",
+  labelNames: ["state"] as const,
+  registers: [registry],
+});
+
+export const agentOutboundEnqueued = new Counter({
+  name: "hitl_agent_outbound_enqueued_total",
+  help: "Agent to Telegram outbound messages accepted for dispatch",
+  labelNames: ["outcome"] as const,
+  registers: [registry],
+});
+
 export const approvalWebhookOutcomes = new Counter({
   name: "hitl_telegram_webhook_outcomes_total",
   help: "Telegram webhook CAS outcomes",
