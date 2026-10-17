@@ -55,8 +55,19 @@ async function upsertSessionTopic(
     const previous = await redis.hgetall(sessionKey);
     const prevTopic = previous.topicId;
     if (prevTopic) {
+      let reopenOk = false;
       try {
         await bot.api.reopenForumTopic(chatId, Number(prevTopic));
+        reopenOk = true;
+      } catch (error) {
+        const message = (error as { message?: string }).message ?? String(error);
+        if (/TOPIC_NOT_MODIFIED/i.test(message)) {
+          reopenOk = true;
+        } else {
+          await redis.hdel(sessionKey, "topicId", "title");
+        }
+      }
+      if (reopenOk) {
         if (sessionName?.trim() && previous.title && previous.title !== title) {
           await bot.api
             .editForumTopic(chatId, Number(prevTopic), { name: title })
@@ -65,8 +76,6 @@ async function upsertSessionTopic(
         await redis.hset(sessionKey, { status: "ACTIVE", disabledAt: "", title });
         await redis.hset(redisKeys.remoteTopicMap(chatId, prevTopic), topicmapData);
         return { ok: true, topicId: prevTopic, title, reused: true };
-      } catch {
-        await redis.hdel(sessionKey, "topicId", "title");
       }
     }
   }
