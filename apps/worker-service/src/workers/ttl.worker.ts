@@ -3,11 +3,13 @@ import type { Redis } from "ioredis";
 import {
   approvalEventSchema,
   buildApprovalMessage,
+  getRemoteMode,
   isRemoteModeOn,
   redisKeys,
-  resolveApproval,
   resolutionStamp,
+  resolveApproval,
   type TtlJobData,
+  type TtlRemoteAuditJobData,
 } from "@hitl/shared-types";
 import type { Queue } from "bullmq";
 import { prisma } from "../db.js";
@@ -30,10 +32,48 @@ export function createTtlWorker({
   return new Worker<TtlJobData>(
     "hitl-ttl-queue",
     async (job) => {
-      const { shortId } = job.data;
+      if (job.name === "remote-audit") {
+        const audit = job.data as TtlRemoteAuditJobData;
+        const current = await getRemoteMode(connection);
+        // a newer enable superseded this audit — never close someone else's live session
+        if (current.enabled && current.enabledAt !== null && current.enabledAt >= audit.enabledAt) {
+          return;
+        }
+
+        const closePromises = [
+          audit.topicId
+            ? bot.api.closeForumTopic(audit.chatId, Number(audit.topicId)).catch(() => undefined)
+            : Promise.resolve(),
+          audit.topicId
+            ? connection.del(redisKeys.remoteTopicMap(audit.chatId, audit.topicId)).catch(() => undefined)
+            : Promise.resolve(),
+          connection
+            .hset(
+              redisKeys.remoteSession(audit.agentId ?? "remote", audit.threadId ?? "session"),
+              { status: "CLOSED", disabledAt: new Date().toISOString() },
+            )
+            .catch(() => undefined),
+          bot.api
+            .sendMessage(
+              audit.chatId,
+              `🛰 Remote session ended (24h dead-man TTL) — topic closed.`,
+              {
+                link_preview_options: { is_disabled: true },
+                ...(audit.topicId ? { message_thread_id: Number(audit.topicId) } : {}),
+              },
+            )
+            .catch(() => undefined),
+        ];
+        await Promise.all(closePromises);
+        job.log("remote audit — flag silent past TTL, closed session");
+        return;
+      }
+
+      const { shortId } = job.data as Extract<TtlJobData, { shortId: string }>;
 
       if (await isRemoteModeOn(connection)) {
-        const postponed = (job.data.postponed ?? 0) + 1;
+        const postponed =
+          ((job.data as Extract<TtlJobData, { shortId: string }>).postponed ?? 0) + 1;
         ttlPostponed.inc();
         await ttlQueue.add(
           "recheck-ttl",

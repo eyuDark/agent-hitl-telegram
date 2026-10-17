@@ -195,10 +195,20 @@ export type DispatchJobData = {
   shortId: string;
 };
 
-export type TtlJobData = {
-  shortId: string;
-  postponed?: number;
+export type TtlRemoteAuditJobData = {
+  enabledAt: string;
+  chatId: string;
+  topicId: string | null;
+  agentId: string | null;
+  threadId: string | null;
 };
+
+export type TtlJobData =
+  | {
+      shortId: string;
+      postponed?: number;
+    }
+  | TtlRemoteAuditJobData;
 
 export type OutboundJobData = {
   chatId: string;

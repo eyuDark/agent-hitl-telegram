@@ -417,6 +417,34 @@ async function handleTextAnswer(ctx: RouteContext, update: TelegramUpdate): Prom
   return reply.code(200).send({ ok: true });
 }
 
+type LingeringSession = {
+  agentId: string;
+  threadId: string;
+  chatId: string;
+  topicId: string | null;
+};
+
+async function closeTopic(bot: Bot, chatId: string, topicId: string): Promise<void> {
+  await bot.api.closeForumTopic(chatId, Number(topicId)).catch(() => undefined);
+}
+
+async function listLingeringSessions(redis: Redis): Promise<LingeringSession[]> {
+  const sessions: LingeringSession[] = [];
+  for await (const keys of redis.scanStream({ match: "hitl:remote:sessions:*", count: 100 })) {
+    for (const key of keys) {
+      const hash = await redis.hgetall(key);
+      if (hash.status !== "ACTIVE") continue;
+      sessions.push({
+        agentId: hash.agentId || "remote",
+        threadId: hash.threadId || "session",
+        chatId: hash.chatId ?? "",
+        topicId: hash.topicId || null,
+      });
+    }
+  }
+  return sessions;
+}
+
 async function handleOperatorSteering(
   ctx: RouteContext,
   message: NonNullable<TelegramUpdate["message"]>,
@@ -428,7 +456,35 @@ async function handleOperatorSteering(
   const inTopicId = message.message_thread_id ? String(message.message_thread_id) : null;
 
   const remote = await getRemoteMode(redis);
-  if (!remote.enabled) return false;
+
+  if (!remote.enabled) {
+    // dead-man was tripped (24h flag expiry) with the user still typing — close lingering sessions
+    const stale = await listLingeringSessions(redis);
+    for (const session of stale) {
+      if (session.chatId && session.topicId) {
+        await closeTopic(bot, session.chatId, session.topicId);
+        await redis
+          .del(redisKeys.remoteTopicMap(session.chatId, session.topicId))
+          .catch(() => undefined);
+      }
+      await redis
+        .hset(
+          redisKeys.remoteSession(session.agentId, session.threadId),
+          { status: "CLOSED", disabledAt: new Date().toISOString() },
+        )
+        .catch(() => undefined);
+      if (inTopicId && session.topicId && inTopicId === session.topicId && session.chatId) {
+        await bot.api
+          .sendMessage(
+            session.chatId,
+            "🛰 Remote session ended (24h dead-man TTL) — re-trigger remote mode from the PC to continue.",
+            { link_preview_options: { is_disabled: true }, message_thread_id: Number(inTopicId) },
+          )
+          .catch(() => undefined);
+      }
+    }
+    return false;
+  }
 
   let agentId: string | null;
   let threadId: string | null;
@@ -437,7 +493,16 @@ async function handleOperatorSteering(
     const mapping = await redis.hgetall(redisKeys.remoteTopicMap(chatId, inTopicId));
     agentId = mapping.agentId || null;
     threadId = mapping.threadId || null;
-    if (!agentId) return false;
+    if (!agentId) {
+      await bot.api
+        .sendMessage(
+          chatId,
+          `🛰 No live agent session bound to this topic. The live session is in topic ${remote.topicId ?? "—"}.`,
+          { link_preview_options: { is_disabled: true }, message_thread_id: Number(inTopicId) },
+        )
+        .catch(() => undefined);
+      return false;
+    }
   } else {
     agentId = remote.agentId;
     threadId = remote.threadId;
@@ -498,11 +563,27 @@ async function handleOperatorSteering(
         resolved_at: new Date(nowIso),
         telegram_chat_id: BigInt(chatId),
         telegram_thread_id: inTopicId ? BigInt(inTopicId) : null,
+        telegram_message_id: BigInt(message.message_id),
         callback_url: callbackUrl,
         expires_at: new Date(Date.parse(nowIso) + 300_000),
       },
     });
   } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      // Telegram re-delivered the same steering message (webhook swap / retry)
+      const dup = await prisma.approval_requests.findFirst({
+        where: {
+          tool_name: "operator_message",
+          telegram_chat_id: BigInt(chatId),
+          telegram_message_id: BigInt(message.message_id),
+        },
+        select: { short_id: true },
+      });
+      if (dup?.short_id) {
+        app.log.warn({ shortId, dedupAs: dup.short_id }, "duplicate steering message ignored");
+        return true;
+      }
+    }
     app.log.error({ err: error, shortId }, "failed to persist operator steering message");
     return false;
   }

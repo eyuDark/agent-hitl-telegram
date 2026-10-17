@@ -63,7 +63,7 @@ export function buildApp({ redis, queues, bot }: BuildAppContext): FastifyInstan
   void app.register(approvalRoutes({ redis, queues }));
   void app.register(telegramWebhookRoutes({ bot, redis, queues }));
   void app.register(agentMessageRoutes({ redis, queues }));
-  void app.register(remoteModeRoutes({ redis, bot }));
+  void app.register(remoteModeRoutes({ redis, bot, initQueues: queues }));
 
   return app;
 }

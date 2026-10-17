@@ -13,6 +13,7 @@ import { requireApiKey } from "../lib/views.js";
 type RemoteModeContext = {
   redis: import("ioredis").Redis;
   bot: Bot;
+  initQueues: import("../queues.js").GatewayQueues;
 };
 
 function remoteSessionNotice(
@@ -106,7 +107,7 @@ async function upsertSessionTopic(
   }
 }
 
-export function remoteModeRoutes({ redis, bot }: RemoteModeContext) {
+export function remoteModeRoutes({ redis, bot, initQueues }: RemoteModeContext) {
   return async (app: FastifyInstance) => {
     app.get("/v1/admin/remote-mode", { preHandler: requireApiKey }, async () => {
       return getRemoteMode(redis);
@@ -124,6 +125,22 @@ export function remoteModeRoutes({ redis, bot }: RemoteModeContext) {
       const chatId = toggle.chatId ?? config.defaultTelegramChatId;
 
       if (toggle.enabled) {
+        let webhookWarning: string | null = null;
+        if (config.publicBaseUrl) {
+          try {
+            const probe = await fetch(new URL("/healthz", config.publicBaseUrl), {
+              signal: AbortSignal.timeout(5_000),
+            });
+            if (!probe.ok) {
+              webhookWarning = `PUBLIC_BASE_URL responded ${probe.status} — Telegram cannot deliver incoming events (approvals/steering).`;
+            }
+          } catch {
+            webhookWarning =
+              "PUBLIC_BASE_URL unreachable from the internet — Telegram cannot deliver incoming events (approvals/steering).";
+          }
+          // shortcut: probe only runs at toggle time, mid-session tunnel death still goes unnoticed
+        }
+
         if (toggle.spawnTopic && !toggle.topicId) {
           const spawned = await upsertSessionTopic(
             bot,
@@ -165,14 +182,34 @@ export function remoteModeRoutes({ redis, bot }: RemoteModeContext) {
             threadId: snapshot.threadId,
             chatId: snapshot.chatId,
             topicId: snapshot.topicId,
+            webhookWarning,
           },
           "remote mode toggled",
+        );
+
+        await initQueues.ttl.add(
+          "remote-audit",
+          {
+            enabledAt: snapshot.enabledAt ?? "",
+            chatId,
+            topicId: snapshot.topicId,
+            agentId: snapshot.agentId,
+            threadId: snapshot.threadId,
+          },
+          {
+            // dead-man: if this flag stays until the 24h audit TTL dies, close the topic
+            jobId: `remote-audit-${Date.now()}`,
+            delay: 24 * 60 * 60 * 1000,
+            removeOnComplete: true,
+          },
         );
 
         await bot.api
           .sendMessage(
             chatId,
-            remoteSessionNotice(true, snapshot.agentId, snapshot.threadId),
+            webhookWarning
+              ? `⚠️ ${webhookWarning}\n\n${remoteSessionNotice(true, snapshot.agentId, snapshot.threadId)}`
+              : remoteSessionNotice(true, snapshot.agentId, snapshot.threadId),
             {
               link_preview_options: { is_disabled: true },
               ...(snapshot.topicId
@@ -182,7 +219,7 @@ export function remoteModeRoutes({ redis, bot }: RemoteModeContext) {
           )
           .catch(() => undefined);
 
-        return reply.code(200).send(snapshot);
+        return reply.code(200).send({ ...snapshot, webhookWarning });
       }
 
       const previous = await getRemoteMode(redis);
