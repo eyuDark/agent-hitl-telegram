@@ -11,6 +11,7 @@ export const remoteModeSnapshotSchema = z.object({
   agentId: z.string().nullable(),
   threadId: z.string().nullable(),
   chatId: z.string().nullable(),
+  topicId: z.string().nullable(),
   callbackUrl: z.string().nullable(),
 });
 export type RemoteModeSnapshot = z.infer<typeof remoteModeSnapshotSchema>;
@@ -24,6 +25,11 @@ export const remoteModeToggleSchema = z.object({
     .union([z.string(), z.number()])
     .transform(String)
     .optional(),
+  topicId: z
+    .union([z.string(), z.number()])
+    .transform(String)
+    .optional(),
+  spawnTopic: z.boolean().optional(),
   callbackUrl: z.string().url().optional(),
 });
 export type RemoteModeToggle = z.input<typeof remoteModeToggleSchema>;
@@ -62,7 +68,18 @@ export const disabledRemoteSnapshot: RemoteModeSnapshot = {
   agentId: null,
   threadId: null,
   chatId: null,
+  topicId: null,
   callbackUrl: null,
+};
+
+export type RemoteModeSession = {
+  agentId: string;
+  threadId: string;
+  chatId: string;
+  topicId: string | null;
+  status: "ACTIVE" | "CLOSED";
+  enabledAt: string;
+  disabledAt: string | null;
 };
 
 function toBool(value: string | undefined): boolean {
@@ -83,6 +100,7 @@ export function parseRemoteHash(hash: Record<string, string>): RemoteModeSnapsho
     agentId: clean(hash.agentId),
     threadId: clean(hash.threadId),
     chatId: clean(hash.chatId),
+    topicId: clean(hash.topicId),
     callbackUrl: clean(hash.callbackUrl),
   };
 }
@@ -115,6 +133,7 @@ export async function setRemoteMode(
     agentId?: string | null;
     threadId?: string | null;
     chatId?: string | null;
+    topicId?: string | null;
     callbackUrl?: string | null;
     auditTtlSeconds?: number;
   },
@@ -132,6 +151,7 @@ export async function setRemoteMode(
         agentId: next.agentId ?? "",
         threadId: next.threadId ?? "",
         chatId: next.chatId ?? "",
+        topicId: next.topicId ?? "",
         callbackUrl: next.callbackUrl ?? "",
       }
     : {

@@ -14,6 +14,10 @@ export const redisKeys = {
   chatIndex: (chatId: string | number) => `hitl:chatidx:${chatId}`,
   remoteMessages: (agentId: string, threadId: string) =>
     `hitl:remote:msgs:${agentId || "*"}:${threadId || "*"}`,
+  remoteSession: (agentId: string, threadId: string) =>
+    `hitl:remote:sessions:${agentId}:${threadId}`,
+  remoteTopicMap: (chatId: string | number, topicId: string | number) =>
+    `hitl:remote:topicmap:${chatId}:${topicId}`,
 } as const;
 
 export const HASH_FIELD = {
@@ -38,6 +42,7 @@ export const HASH_FIELD = {
   chatId: "chatId",
   messageId: "messageId",
   originalText: "originalText",
+  chatTopicId: "chatTopicId",
   createdAt: "createdAt",
   expiresAt: "expiresAt",
   actorId: "actorId",

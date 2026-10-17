@@ -4,6 +4,7 @@ import {
   cancelApprovalSchema,
   createApprovalRequestSchema,
   generateShortId,
+  getRemoteMode,
   hashToolArgs,
   hashToView,
   listApprovalsQuerySchema,
@@ -63,7 +64,15 @@ export function approvalRoutes({ redis, queues }: AppContext) {
       const toolArgs = body.toolArgs ?? null;
       const argsHash = hashToolArgs(toolArgs);
       const redacted = redactArgs(toolArgs);
-      const chatId = body.telegramChatId ?? config.defaultTelegramChatId;
+
+      const remote = await getRemoteMode(redis);
+      let chatId = body.telegramChatId ?? config.defaultTelegramChatId;
+      let hotTopicId: string | null = null;
+      if (!body.telegramChatId && remote.enabled) {
+        if (remote.chatId) chatId = remote.chatId;
+        hotTopicId = remote.topicId ?? null;
+      }
+
       const callbackUrl = body.callbackUrl ?? null;
 
       let row;
@@ -83,6 +92,7 @@ export function approvalRoutes({ redis, queues }: AppContext) {
             options_json: body.options ? (body.options as Prisma.InputJsonValue) : undefined,
             reason: body.reason ?? null,
             telegram_chat_id: BigInt(chatId),
+            telegram_thread_id: hotTopicId ? BigInt(hotTopicId) : null,
             callback_url: callbackUrl,
             expires_at: expiresAt,
           },
@@ -120,6 +130,7 @@ export function approvalRoutes({ redis, queues }: AppContext) {
           reason: body.reason ?? "",
           callbackUrl: callbackUrl ?? "",
           chatId,
+          chatTopicId: hotTopicId ?? "",
           messageId: "",
           originalText: "",
           createdAt: now.toISOString(),

@@ -24,6 +24,8 @@ export function toView(row: approval_requests): ApprovalView {
     telegramChatId: String(row.telegram_chat_id),
     telegramMessageId:
       row.telegram_message_id === null ? null : String(row.telegram_message_id),
+    telegramThreadId:
+      row.telegram_thread_id === null ? null : String(row.telegram_thread_id),
     resolvedByTelegramId:
       row.resolved_by_telegram_id === null ? null : String(row.resolved_by_telegram_id),
     resolvedByUsername: row.resolved_by_username,

@@ -38,6 +38,7 @@ export function agentMessageRoutes({ redis, queues }: AgentMessageContext) {
         "agent-outbound",
         {
           chatId,
+          topicId: remote.topicId ?? null,
           agentId,
           threadId,
           message,
@@ -46,7 +47,10 @@ export function agentMessageRoutes({ redis, queues }: AgentMessageContext) {
         { jobId: `out-${generateShortId()}` },
       );
       agentOutboundEnqueued.inc({ outcome: "enqueued" });
-      app.log.info({ agentId, threadId, chatId }, "agent message queued for telegram");
+      app.log.info(
+        { agentId, threadId, chatId, topicId: remote.topicId ?? null },
+        "agent message queued for telegram",
+      );
 
       return reply.code(202).send({ ok: true, delivered: true, chatId });
     });

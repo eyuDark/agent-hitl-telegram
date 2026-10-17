@@ -32,25 +32,33 @@ export function createDispatchWorker(redis: Redis): Worker<DispatchJobData> {
       const view = hashToView(state as unknown as RequestHashData);
       const text = buildApprovalMessage(view);
       const chatId = state.chatId;
+      const topicThreadId = state.chatTopicId;
       if (!chatId) throw new Error(`Missing chatId for request ${shortId}`);
 
+      const threadOptions = topicThreadId
+        ? { message_thread_id: Number(topicThreadId) }
+        : {};
+      const baseOptions = { link_preview_options: { is_disabled: true } } as const;
       const stop = dispatchLatency.startTimer();
       let message;
 
       if (view.kind === "QUESTION") {
         message = await bot.api.sendMessage(chatId, text, {
-          link_preview_options: { is_disabled: true },
+          ...threadOptions,
+          ...baseOptions,
         });
       } else if (view.kind === "CHOICE") {
         const options = parseOptions(state.options) ?? view.options ?? [];
         message = await bot.api.sendMessage(chatId, text, {
+          ...threadOptions,
           reply_markup: choiceKeyboard(options, shortId),
-          link_preview_options: { is_disabled: true },
+          ...baseOptions,
         });
       } else {
         message = await bot.api.sendMessage(chatId, text, {
+          ...threadOptions,
           reply_markup: decisionKeyboard(shortId),
-          link_preview_options: { is_disabled: true },
+          ...baseOptions,
         });
       }
       stop();

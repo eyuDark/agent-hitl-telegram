@@ -141,6 +141,7 @@ export const approvalViewSchema = z.object({
   callbackUrl: z.string().nullable(),
   telegramChatId: z.string(),
   telegramMessageId: z.string().nullable(),
+  telegramThreadId: z.string().nullable(),
   resolvedByTelegramId: z.string().nullable(),
   resolvedByUsername: z.string().nullable(),
   resolutionReason: z.string().nullable(),
@@ -201,6 +202,7 @@ export type TtlJobData = {
 
 export type OutboundJobData = {
   chatId: string;
+  topicId: string | null;
   agentId: string;
   threadId: string;
   message: string;

@@ -171,13 +171,16 @@ x-api-key: <gateway api key>
   "enabled": true,
   "agentId": "claude-code",
   "threadId": "thread-42",
+  "chatId": "-1001234567890",
+  "spawnTopic": true,
   "callbackUrl": "https://agent.example.com/webhooks/hitl-resume",
   "reason": "going for a run"
 }
 ```
 
 - **Session spawn.** Enabling binds an agent session (`agentId` + optional `threadId`) to the Telegram chat (`chatId`, default: `DEFAULT_TELEGRAM_CHAT_ID`) and pushes a `🛰 Remote mode ON` notice. Disabling routes back to normal and stamps `disabledAt`. The flag persists for 24h max (`hitl:remote` Redis hash) — a dead-man switch so remote mode can never silently outlive you; re-trigger to extend.
-- **Outbound: agent responses → bot.** While enabled, agents call MCP `send_operator_message(message, thread_id?)` (or `POST /v1/notifications/agent-message`) and the gateway enqueues `hitl-telegram-outbound`, which the worker delivers to the chat. When remote mode is off the same call acks `{ delivered: false, reason: "remote_mode_off" }` — no accidental routing.
+- **Forum-topic sessions (v2).** Pass `topicId` to bind an existing Telegram forum topic, or `spawnTopic: true` and the gateway creates one named `{agentId} · {threadId}` via `createForumTopic`. With a topic bound, every outbound message (progress pushes and pending approvals) lands **in that topic**, operator replies in-topic steer that session (resolved via the `hitl:remote:topicmap:{chatId}:{topicId}` hash, falling back to the global flag binding for DM steering), and disabling remote mode closes the topic and marks the session registry `CLOSED`. Requirements: the bound chat must be a topics-enabled supergroup and the bot a member with **Manage Topics** (admin bots also bypass privacy mode, so steering reaches the webhook). If the binding chat is an ordinary DM or a topics-disabled group, omit both fields and v1 behavior applies: everything flows to the main chat.
+- **Outbound: agent responses → bot.** While enabled, agents call MCP `send_operator_message(message, thread_id?)` (or `POST /v1/notifications/agent-message`) and the gateway enqueues `hitl-telegram-outbound`, which the worker delivers to the bound chat (and topic, when one is bound). When remote mode is off the same call acks `{ delivered: false, reason: "remote_mode_off" }` — no accidental routing.
 - **Inbound: operator steering → agent.** Any non-tagged text message from an allowed operator while remote mode is on becomes a directive: the gateway persists an `operator_message` row (`kind=QUESTION`, `status=ANSWERED`) in the ledger and enqueues the signed `resume` callback so webhook agents receive the instruction. Agents running on stdio (Claude Code / OpenCode) pull them via MCP `check_operator_messages` or `GET /v1/remote/messages`. Tagged messages (`[shortId] …`) keep answering pending approvals as usual.
 - **TTL hold.** While remote mode is active, the TTL worker postpones expiry (re-check every `REMOTE_TTL_RECHECK_SECONDS`) instead of firing the dead-man's switch — an unanswered approval during your run doesn't auto-deny. Switching remote mode off resumes normal expiry within one re-check.
 - **Permissions stay gated.** Remote mode changes the channel, never the security model: approve/deny still flows through the Redis CAS, the approver list, shared-secret webhooks, HMAC-signed resumes, and the runbook toolargs hash re-check.

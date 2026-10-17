@@ -38,13 +38,19 @@ type TelegramUpdate = {
   callback_query?: {
     id: string;
     data?: string;
-    message?: { text?: string; chat?: { id: number }; message_id?: number };
+    message?: {
+      text?: string;
+      chat?: { id: number };
+      message_id?: number;
+      message_thread_id?: number;
+    };
     from: { id: number; username?: string; first_name?: string };
   };
   message?: {
     message_id: number;
-    chat: { id: number };
+    chat: { id: number; type?: string };
     text?: string;
+    message_thread_id?: number;
     from?: { id: number; username?: string; first_name?: string };
   };
 };
@@ -419,11 +425,25 @@ async function handleOperatorSteering(
 ): Promise<boolean> {
   const { app, bot, redis, queues } = ctx;
   const chatId = String(message.chat.id);
+  const inTopicId = message.message_thread_id ? String(message.message_thread_id) : null;
 
   const remote = await getRemoteMode(redis);
   if (!remote.enabled) return false;
 
-  if (!remote.agentId) {
+  let agentId: string | null;
+  let threadId: string | null;
+
+  if (inTopicId) {
+    const mapping = await redis.hgetall(redisKeys.remoteTopicMap(chatId, inTopicId));
+    agentId = mapping.agentId || null;
+    threadId = mapping.threadId || null;
+    if (!agentId) return false;
+  } else {
+    agentId = remote.agentId;
+    threadId = remote.threadId;
+  }
+
+  if (!agentId) {
     await bot.api
       .sendMessage(
         chatId,
@@ -434,8 +454,7 @@ async function handleOperatorSteering(
     return false;
   }
 
-  const agentId = remote.agentId;
-  const threadId = remote.threadId ?? `remote-${agentId}`;
+  const sessionThreadId = threadId ?? `remote-${agentId}`;
   const shortId = generateShortId();
   const nowIso = new Date().toISOString();
   const actorUsername = actor.username ?? actor.first_name ?? null;
@@ -464,7 +483,7 @@ async function handleOperatorSteering(
         short_id: shortId,
         idempotency_key: `op-${shortId}`,
         agent_id: agentId,
-        thread_id: threadId,
+        thread_id: sessionThreadId,
         tool_name: "operator_message",
         tool_args_redacted: redacted as Prisma.InputJsonValue,
         tool_args_hash: argsHash,
@@ -478,6 +497,7 @@ async function handleOperatorSteering(
         resolved_by_username: actorUsername,
         resolved_at: new Date(nowIso),
         telegram_chat_id: BigInt(chatId),
+        telegram_thread_id: inTopicId ? BigInt(inTopicId) : null,
         callback_url: callbackUrl,
         expires_at: new Date(Date.parse(nowIso) + 300_000),
       },
@@ -488,7 +508,10 @@ async function handleOperatorSteering(
   }
 
   await bot.api
-    .sendMessage(chatId, `🛰 → ${agentId} · ${threadId}\n[${shortId}]`)
+    .sendMessage(chatId, `🛰 → ${agentId} · ${sessionThreadId}\n[${shortId}]`, {
+      link_preview_options: { is_disabled: true },
+      ...(inTopicId ? { message_thread_id: Number(inTopicId) } : {}),
+    })
     .catch(() => undefined);
 
   if (callbackUrl) {

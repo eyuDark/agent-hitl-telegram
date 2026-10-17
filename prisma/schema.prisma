@@ -48,6 +48,7 @@ model approval_requests {
 
   telegram_chat_id       BigInt
   telegram_message_id    BigInt?
+  telegram_thread_id     BigInt?
 
   resolved_by_telegram_id BigInt?
   resolved_by_username    String?         @db.VarChar(64)

@@ -19,6 +19,7 @@ export type RequestHashData = {
   chatId: string;
   messageId: string;
   originalText: string;
+  chatTopicId?: string;
   createdAt: string;
   expiresAt: string;
   actorId: string;
@@ -49,6 +50,7 @@ export function hashToView(data: RequestHashData): ApprovalView {
     callbackUrl: emptyToNull(data.callbackUrl),
     telegramChatId: data.chatId,
     telegramMessageId: emptyToNull(data.messageId),
+    telegramThreadId: emptyToNull(data.chatTopicId),
     resolvedByTelegramId: emptyToNull(data.actorId),
     resolvedByUsername: emptyToNull(data.actorUsername),
     resolutionReason: emptyToNull(data.resolutionReason),
