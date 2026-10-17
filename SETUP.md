@@ -106,6 +106,22 @@ guaranteed, add one line to the project's `CLAUDE.md` like
 Pass a `callbackUrl` per approval; the gateway POSTs a signed resume payload when
 the operator resolves the request. Same REST API otherwise (`POST /v1/approvals`).
 
+### CLI agents on an unattended PC (push into the loop)
+
+CLI agents are eventless — they sleep between turns. To get Telegram steering
+delivered *to the agent itself* while you are away, run the session under tmux:
+
+```bash
+tmux new -s hitl   # then start the agent inside (e.g. opencode / claude)
+```
+
+The local watchdog probes steering every ~10s and, when the agent is dormant,
+injects the sweep prompt directly into that tmux pane (`tmux send-keys`) — the
+agent wakes, swallows everything queued in `steering-live.log`, and answers back
+through the outbound bridge. Without tmux the same watchdog still alarms the
+Telegram topic (⏳ every 60s), but nobody can wake the agent until a human types
+into its terminal.
+
 ## 5. First remote session
 
 ```bash
