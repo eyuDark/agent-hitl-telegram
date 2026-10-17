@@ -33,31 +33,59 @@ async function closeTopic(bot: Bot, chatId: string, topicId: string): Promise<vo
     .catch(() => undefined);
 }
 
-async function spawnTopic(
+async function upsertSessionTopic(
   bot: Bot,
   redis: import("ioredis").Redis,
   chatId: string,
   agentId: string | undefined,
   threadId: string | undefined,
-): Promise<{ ok: true; topicId: string; title: string } | { ok: false; error: string }> {
-  const title = `${agentId ?? "remote"} · ${threadId ?? "session"}`.slice(0, 96);
+  sessionName: string | undefined,
+  forceNewTopic: boolean | undefined,
+): Promise<
+  { ok: true; topicId: string; title: string; reused: boolean } | { ok: false; error: string }
+> {
+  const agent = agentId ?? "remote";
+  const sessionThreadId = threadId ?? "session";
+  const sessionKey = redisKeys.remoteSession(agent, sessionThreadId);
+  const requestedTitle = sessionName?.trim() || `${agent} · ${sessionThreadId}`;
+  const title = requestedTitle.slice(0, 96);
+  const topicmapData = { agentId: agent, threadId: sessionThreadId };
+
+  if (!forceNewTopic) {
+    const previous = await redis.hgetall(sessionKey);
+    const prevTopic = previous.topicId;
+    if (prevTopic) {
+      try {
+        await bot.api.reopenForumTopic(chatId, Number(prevTopic));
+        if (sessionName?.trim() && previous.title && previous.title !== title) {
+          await bot.api
+            .editForumTopic(chatId, Number(prevTopic), { name: title })
+            .catch(() => undefined);
+        }
+        await redis.hset(sessionKey, { status: "ACTIVE", disabledAt: "", title });
+        await redis.hset(redisKeys.remoteTopicMap(chatId, prevTopic), topicmapData);
+        return { ok: true, topicId: prevTopic, title, reused: true };
+      } catch {
+        await redis.hdel(sessionKey, "topicId", "title");
+      }
+    }
+  }
+
   try {
     const topic = await bot.api.createForumTopic(chatId, title);
     const topicId = String(topic.message_thread_id);
-    await redis.hset(redisKeys.remoteSession(agentId ?? "remote", threadId ?? "session"), {
-      agentId: agentId ?? "remote",
-      threadId: threadId ?? "session",
+    await redis.hset(sessionKey, {
+      agentId: agent,
+      threadId: sessionThreadId,
       chatId,
       topicId,
+      title,
       status: "ACTIVE",
       enabledAt: new Date().toISOString(),
       disabledAt: "",
     });
-    await redis.hset(redisKeys.remoteTopicMap(chatId, topicId), {
-      agentId: agentId ?? "remote",
-      threadId: threadId ?? "session",
-    });
-    return { ok: true, topicId, title };
+    await redis.hset(redisKeys.remoteTopicMap(chatId, topicId), topicmapData);
+    return { ok: true, topicId, title, reused: false };
   } catch (error) {
     const message = (error as { message?: string }).message ?? String(error);
     return {
@@ -88,12 +116,14 @@ export function remoteModeRoutes({ redis, bot }: RemoteModeContext) {
 
       if (toggle.enabled) {
         if (toggle.spawnTopic && !toggle.topicId) {
-          const spawned = await spawnTopic(
+          const spawned = await upsertSessionTopic(
             bot,
             redis,
             chatId,
             toggle.agentId,
             toggle.threadId,
+            toggle.sessionName,
+            toggle.forceNewTopic,
           );
           if (!spawned.ok) {
             remoteModeToggles.inc({ state: "spawn_topic_failed" });
@@ -101,6 +131,10 @@ export function remoteModeRoutes({ redis, bot }: RemoteModeContext) {
             return reply.code(400).send({ error: spawned.error });
           }
           toggle.topicId = spawned.topicId;
+          app.log.info(
+            { agentId: toggle.agentId, threadId: toggle.threadId, topicId: spawned.topicId, reused: spawned.reused, title: spawned.title },
+            spawned.reused ? "remote session topic reopened" : "remote session topic created",
+          );
         }
 
         const snapshot = await setRemoteMode(redis, {

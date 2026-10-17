@@ -30,6 +30,8 @@ export const remoteModeToggleSchema = z.object({
     .transform(String)
     .optional(),
   spawnTopic: z.boolean().optional(),
+  forceNewTopic: z.boolean().optional(),
+  sessionName: z.string().trim().max(96).optional(),
   callbackUrl: z.string().url().optional(),
 });
 export type RemoteModeToggle = z.input<typeof remoteModeToggleSchema>;
@@ -77,6 +79,7 @@ export type RemoteModeSession = {
   threadId: string;
   chatId: string;
   topicId: string | null;
+  title?: string;
   status: "ACTIVE" | "CLOSED";
   enabledAt: string;
   disabledAt: string | null;
